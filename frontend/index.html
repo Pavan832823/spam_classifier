@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SpamGuard — AI Email Classifier</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:         #0b0d14;
+      --surface:    #10131c;
+      --surface2:   #181c28;
+      --surface3:   #1e2234;
+      --border:     #252a3d;
+      --accent:     #6c63ff;
+      --accent2:    #9d97ff;
+      --ham:        #22c55e;
+      --spam:       #ef4444;
+      --warn:       #f59e0b;
+      --text:       #dde3f0;
+      --muted:      #6b7799;
+      --radius:     10px;
+      --shadow:     0 8px 32px rgba(0,0,0,0.6);
+      --font:       'Sora', system-ui, sans-serif;
+      --mono:       'JetBrains Mono', monospace;
+    }
+    html, body { height:100%; font-family:var(--font); background:var(--bg); color:var(--text); font-size:14px; }
+
+    /* ── Layout ── */
+    .app { display:grid; grid-template-columns:0 1fr; grid-template-rows:54px 1fr; height:100vh; transition:grid-template-columns .25s; }
+    .app.logged-in { grid-template-columns:230px 1fr; }
+    .topbar { grid-column:1/-1; display:flex; align-items:center; gap:12px; padding:0 24px; background:var(--surface); border-bottom:1px solid var(--border); z-index:10; }
+    .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:12px 0 16px; display:flex; flex-direction:column; gap:2px; overflow-y:auto; overflow-x:hidden; width:0; transition:width .25s; }
+    .sidebar.visible { width:230px; }
+    .main { overflow-y:auto; display:flex; flex-direction:column; background:var(--bg); }
+
+    /* ── Topbar ── */
+    .logo { font-size:17px; font-weight:800; color:var(--accent); display:flex; align-items:center; gap:9px; letter-spacing:-0.3px; }
+    .logo-icon { width:28px; height:28px; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:14px; }
+    .topbar-sub { font-size:11px; color:var(--muted); margin-left:auto; letter-spacing:.3px; }
+
+    /* ── Login prompt chip (shown when not logged in) ── */
+    .login-chip { display:flex; align-items:center; gap:8px; margin-left:auto; padding:6px 14px; background:rgba(108,99,255,0.12); border:1px solid rgba(108,99,255,0.28); border-radius:8px; font-size:12px; font-weight:600; color:var(--accent2); cursor:pointer; transition:all .15s; }
+    .login-chip:hover { background:rgba(108,99,255,0.2); }
+    .login-chip.hidden { display:none; }
+
+    .btn-logout { padding:7px 14px; background:rgba(239,68,68,0.12); color:var(--spam); border:1px solid rgba(239,68,68,0.25); border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; display:none; margin-left:auto; }
+    .btn-logout:hover { background:rgba(239,68,68,0.22); }
+
+    /* ── Sidebar ── */
+    .sidebar-label { padding:16px 16px 6px; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1.4px; font-weight:700; }
+    .nav-item { display:flex; align-items:center; gap:10px; padding:9px 18px; cursor:pointer; color:var(--muted); font-size:13px; border-radius:0; transition:all .12s; position:relative; border-left:3px solid transparent; }
+    .nav-item:hover { background:var(--surface2); color:var(--text); }
+    .nav-item.active { background:linear-gradient(90deg,rgba(108,99,255,0.18),transparent); color:var(--accent2); border-left-color:var(--accent); }
+    .nav-item .icon { font-size:15px; width:18px; text-align:center; flex-shrink:0; }
+    .nav-badge { margin-left:auto; font-size:10px; padding:1px 7px; border-radius:10px; font-weight:700; }
+    .badge-spam { background:var(--spam); color:#fff; }
+    .badge-ham  { background:var(--ham);  color:#fff; }
+    .badge-pill { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+    .sync-sub { padding:3px 18px 6px 46px; font-size:11px; color:var(--muted); display:none; }
+
+    /* ── Stats Bar ── */
+    .stats-bar { display:none; grid-template-columns:repeat(4,1fr); gap:12px; padding:16px 20px; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0; }
+    .stats-bar.visible { display:grid; }
+    .stat-card { background:var(--surface2); border-radius:var(--radius); padding:14px 16px; border:1px solid var(--border); }
+    .stat-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; font-weight:600; }
+    .stat-value { font-size:26px; font-weight:800; line-height:1; font-family:var(--mono); }
+    .sv-purple { color:var(--accent2); }
+    .sv-green  { color:var(--ham); }
+    .sv-red    { color:var(--spam); }
+
+    /* ── Panels ── */
+    .panel { display:none; flex-direction:column; flex:1; min-height:0; }
+    .panel.active { display:flex; }
+    .panel-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .panel-title { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }
+    .panel-actions { display:flex; gap:8px; }
+
+    /* ── Email List ── */
+    .email-list { flex:1; overflow-y:auto; }
+    .email-item { display:grid; grid-template-columns:40px 1fr auto; align-items:start; gap:12px; padding:12px 20px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s; }
+    .email-item:hover { background:var(--surface2); }
+    .email-avatar { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; flex-shrink:0; margin-top:2px; }
+    .email-body-col { min-width:0; }
+    .email-from { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px; }
+    .email-subject { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px; }
+    .email-preview { font-size:11px; color:var(--muted); opacity:.7; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .email-right-col { display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width:70px; }
+    .email-time { font-size:10px; color:var(--muted); white-space:nowrap; font-family:var(--mono); }
+    .conf-pill { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:700; white-space:nowrap; font-family:var(--mono); }
+    .pill-ham  { background:rgba(34,197,94,.18);  color:var(--ham); }
+    .pill-spam { background:rgba(239,68,68,.18); color:var(--spam); }
+    .empty-state { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--muted); gap:14px; padding:60px 20px; }
+    .empty-icon { font-size:52px; opacity:.25; }
+    .loading-row { padding:24px; text-align:center; color:var(--muted); font-size:13px; }
+
+    /* ── Email Detail ── */
+    .email-detail { background:var(--surface); border-top:1px solid var(--border); flex-shrink:0; display:none; }
+    .email-detail.open { display:block; }
+    .detail-inner { padding:20px; max-width:900px; }
+    .detail-back { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; cursor:pointer; margin-bottom:14px; padding:4px 0; }
+    .detail-back:hover { color:var(--text); }
+    .detail-subject { font-size:20px; font-weight:700; margin-bottom:10px; line-height:1.3; }
+    .detail-meta { font-size:12px; color:var(--muted); margin-bottom:12px; display:flex; flex-wrap:wrap; gap:12px; }
+    .detail-indicators { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+    .ind-tag { background:rgba(245,158,11,.12); color:var(--warn); font-size:11px; padding:3px 8px; border-radius:6px; border:1px solid rgba(245,158,11,.2); }
+    .detail-body-box { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-size:13px; line-height:1.7; white-space:pre-wrap; color:#cbd5e1; max-height:320px; overflow-y:auto; font-family:inherit; }
+    .detail-actions { display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
+
+    /* ── Compose Panel ── */
+    .compose-outer { flex:1; display:flex; justify-content:center; overflow-y:auto; padding:24px 20px 40px; }
+    .compose-wrap { max-width:680px; width:100%; display:flex; flex-direction:column; gap:16px; }
+
+    .form-group { display:flex; flex-direction:column; gap:6px; }
+    .form-label { font-size:10px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.8px; }
+    .form-input {
+      background:var(--surface2);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:10px 14px;
+      color:var(--text);
+      font-size:13px;
+      font-family:var(--font);
+      outline:none;
+      transition:border-color .15s, box-shadow .15s;
+      width:100%;
+    }
+    .form-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(108,99,255,0.12); }
+    .form-input::placeholder { color:var(--muted); opacity:.6; }
+    textarea.form-input { resize:vertical; min-height:150px; }
+
+    .threshold-section { display:flex; flex-direction:column; gap:8px; }
+    .threshold-row { display:flex; align-items:center; gap:12px; }
+    .threshold-label { font-size:11px; color:var(--muted); white-space:nowrap; }
+    input[type="range"] { flex:1; accent-color:var(--accent); cursor:pointer; height:4px; }
+    .threshold-val { font-size:13px; font-weight:800; color:var(--accent2); min-width:36px; text-align:right; font-family:var(--mono); }
+
+    .action-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:4px; }
+
+    /* ── Result card ── */
+    .result-card { border-radius:var(--radius); padding:18px 20px; border:1px solid; display:none; margin-top:4px; animation:fadeUp .25s ease; }
+    .result-card.ham  { background:rgba(34,197,94,.07);  border-color:rgba(34,197,94,.3); }
+    .result-card.spam { background:rgba(239,68,68,.07); border-color:rgba(239,68,68,.3); }
+    .result-verdict { font-size:18px; font-weight:800; margin-bottom:10px; }
+    .result-verdict.ham  { color:var(--ham); }
+    .result-verdict.spam { color:var(--spam); }
+    .result-info { font-size:12px; color:var(--muted); margin-bottom:10px; display:flex; gap:16px; flex-wrap:wrap; font-family:var(--mono); }
+    .conf-bar { background:var(--border); border-radius:4px; height:6px; overflow:hidden; margin:8px 0 4px; }
+    .conf-fill { height:100%; border-radius:4px; transition:width .6s cubic-bezier(.4,0,.2,1); }
+    .fill-ham  { background:var(--ham); }
+    .fill-spam { background:var(--spam); }
+    .ind-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+
+    @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+    /* ── Buttons ── */
+    .btn { padding:9px 18px; border-radius:8px; border:none; font-size:12px; font-weight:700; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; gap:7px; white-space:nowrap; font-family:var(--font); letter-spacing:.2px; }
+    .btn-primary { background:var(--accent); color:#fff; box-shadow:0 2px 12px rgba(108,99,255,0.35); }
+    .btn-primary:hover { background:#7b73ff; box-shadow:0 4px 16px rgba(108,99,255,0.5); transform:translateY(-1px); }
+    .btn-danger  { background:rgba(239,68,68,.12); color:var(--spam); border:1px solid rgba(239,68,68,.25); }
+    .btn-danger:hover { background:rgba(239,68,68,.22); }
+    .btn-success { background:rgba(34,197,94,.12); color:var(--ham); border:1px solid rgba(34,197,94,.25); }
+    .btn-success:hover { background:rgba(34,197,94,.22); }
+    .btn-ghost   { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+    .btn-ghost:hover { background:var(--surface3); color:var(--text); border-color:var(--accent); }
+    .btn:disabled { opacity:.4; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
+
+    /* ── Login Modal ── */
+    .login-overlay {
+      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.75); backdrop-filter:blur(8px); z-index:200;
+    }
+    .login-overlay.visible { display:flex; }
+    .login-box {
+      background:var(--surface);
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:36px 32px;
+      width:360px;
+      display:flex; flex-direction:column; gap:16px;
+      box-shadow:var(--shadow), 0 0 80px rgba(108,99,255,0.1);
+      animation:fadeUp .2s ease;
+      position:relative;
+    }
+    .login-close { position:absolute; top:14px; right:16px; background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer; padding:2px 6px; border-radius:6px; }
+    .login-close:hover { background:var(--surface2); color:var(--text); }
+    .login-title { font-size:19px; font-weight:800; color:var(--text); display:flex; align-items:center; gap:10px; }
+    .login-title-icon { width:34px; height:34px; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:16px; }
+    .login-sub { font-size:12px; color:var(--muted); line-height:1.6; }
+
+    /* ── Initial Screen (pre-login public classify) ── */
+    .classify-banner {
+      background:linear-gradient(135deg, rgba(108,99,255,0.08), rgba(108,99,255,0.02));
+      border:1px solid rgba(108,99,255,0.18);
+      border-radius:12px;
+      padding:16px 20px;
+      display:flex; align-items:center; gap:14px;
+      font-size:12px; color:var(--muted);
+    }
+    .classify-banner-icon { font-size:22px; flex-shrink:0; }
+    .classify-banner strong { color:var(--accent2); }
+    .classify-banner .btn-sm { padding:6px 13px; font-size:11px; margin-left:auto; flex-shrink:0; }
+
+    /* ── App Password Dropdown ── */
+    .apppw-toggle {
+      display:inline-flex; align-items:center; gap:5px;
+      font-size:10px; font-weight:700; color:var(--accent2);
+      background:rgba(108,99,255,0.1); border:1px solid rgba(108,99,255,0.22);
+      border-radius:6px; padding:3px 9px; cursor:pointer;
+      transition:all .15s; user-select:none; letter-spacing:.3px;
+    }
+    .apppw-toggle:hover { background:rgba(108,99,255,0.2); }
+    .apppw-toggle .arrow {
+      display:inline-block; transition:transform .22s ease; font-style:normal; font-size:9px;
+    }
+    .apppw-toggle.open .arrow { transform:rotate(180deg); }
+
+    .apppw-card {
+      background:var(--surface3);
+      border:1px solid rgba(108,99,255,0.22);
+      border-radius:10px;
+      overflow:hidden;
+      max-height:0;
+      opacity:0;
+      transition:max-height .3s cubic-bezier(.4,0,.2,1), opacity .25s ease, margin .25s ease;
+      margin-top:0;
+    }
+    .apppw-card.open {
+      max-height:480px;
+      opacity:1;
+      margin-top:10px;
+    }
+    .apppw-card-inner { padding:14px 16px 16px; display:flex; flex-direction:column; gap:10px; }
+    .apppw-card-title {
+      font-size:11px; font-weight:700; color:var(--accent2);
+      text-transform:uppercase; letter-spacing:.8px;
+      display:flex; align-items:center; gap:7px; padding-bottom:8px;
+      border-bottom:1px solid var(--border);
+    }
+    .apppw-steps { display:flex; flex-direction:column; gap:8px; }
+    .apppw-step {
+      display:flex; gap:10px; align-items:flex-start;
+    }
+    .apppw-num {
+      min-width:20px; height:20px; border-radius:50%;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));
+      color:#fff; font-size:10px; font-weight:800;
+      display:flex; align-items:center; justify-content:center;
+      flex-shrink:0; margin-top:1px;
+    }
+    .apppw-text { font-size:11px; color:#b0bcd8; line-height:1.6; }
+    .apppw-text strong { color:var(--text); font-weight:600; }
+    .apppw-text code {
+      background:rgba(108,99,255,0.15); color:var(--accent2);
+      padding:1px 5px; border-radius:4px; font-family:var(--mono); font-size:10px;
+    }
+    .apppw-tip {
+      background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.2);
+      border-radius:7px; padding:8px 11px;
+      font-size:10px; color:#d4a84b; line-height:1.6;
+      display:flex; gap:7px; align-items:flex-start;
+    }
+
+    /* ── Toast ── */
+    .toast { position:fixed; bottom:20px; right:20px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:11px 18px; font-size:13px; box-shadow:var(--shadow); z-index:1000; opacity:0; transform:translateY(10px); transition:all .2s; pointer-events:none; max-width:320px; }
+    .toast.show { opacity:1; transform:translateY(0); }
+
+    /* ── Spinner ── */
+    .spin { display:inline-block; width:13px; height:13px; border:2px solid rgba(255,255,255,.25); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-track { background:transparent; } ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  </style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-icon">🛡️</div>
+      SpamGuard
+    </div>
+    <!-- Shown when NOT logged in -->
+    <div class="login-chip" id="login-chip" onclick="openLoginModal()">🔐 Sign in for full access</div>
+    <!-- Shown when logged in -->
+    <button class="btn-logout" id="logout-btn" onclick="logout()">🔓 Logout</button>
+  </header>
+
+  <!-- Sidebar (only visible when logged in) -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-label">Mailbox</div>
+    <div class="nav-item active" onclick="showPanel('compose')" id="nav-compose">
+      <span class="icon">✉️</span> Classify Email
+    </div>
+    <div class="nav-item" onclick="showPanel('inbox')" id="nav-inbox">
+      <span class="icon">📥</span> Inbox
+      <span class="nav-badge badge-ham" id="badge-inbox">0</span>
+    </div>
+    <div class="nav-item" onclick="showPanel('trash')" id="nav-trash">
+      <span class="icon">🗑️</span> Spam / Trash
+      <span class="nav-badge badge-spam" id="badge-trash">0</span>
+    </div>
+
+    <div class="sidebar-label">System</div>
+    <div class="nav-item" onclick="syncGmail(false)" id="nav-sync">
+      <span class="icon">📨</span> Sync Now
+    </div>
+    <div class="nav-item" onclick="syncAllEmails()" id="nav-fetchall">
+      <span class="icon">📥</span> Fetch All Emails
+    </div>
+    <div class="nav-item" onclick="toggleAutoSync()" id="nav-autosync">
+      <span class="icon">🔄</span>
+      <span>Auto-Sync</span>
+      <span class="nav-badge badge-pill" id="autosync-badge" style="background:#374151;color:#9ca3af;margin-left:auto;">OFF</span>
+    </div>
+    <div class="sync-sub" id="sync-sub">⏱ Next sync: <span id="countdown">--</span>s &nbsp;|&nbsp; <span id="last-sync-lbl"></span></div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main" id="main">
+
+    <!-- Stats Bar (logged in only) -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-card">
+        <div class="stat-label">Total Classified</div>
+        <div class="stat-value sv-purple" id="stat-total">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ham (Inbox)</div>
+        <div class="stat-value sv-green" id="stat-inbox">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Spam (Trash)</div>
+        <div class="stat-value sv-red" id="stat-trash">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Spam Rate</div>
+        <div class="stat-value sv-red" id="stat-rate">—</div>
+      </div>
+    </div>
+
+    <!-- ── COMPOSE PANEL (public) ── -->
+    <div class="panel active" id="panel-compose">
+      <div class="panel-header">
+        <div class="panel-title">✉️ Classify an Email</div>
+      </div>
+      <div class="compose-outer">
+        <div class="compose-wrap">
+
+          <!-- Banner shown only when NOT logged in -->
+          <div class="classify-banner" id="public-banner">
+            <div class="classify-banner-icon">💡</div>
+            <div><strong>Classify without signing in.</strong> Sign in to access your Gmail inbox, auto-sync, and spam history.</div>
+            <button class="btn btn-primary btn-sm" onclick="openLoginModal()">Sign in</button>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Sender</label>
+            <input class="form-input" id="input-sender" type="email" placeholder="sender@example.com"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Subject</label>
+            <input class="form-input" id="input-subject" placeholder="Email subject line..."/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email Body *</label>
+            <textarea class="form-input" id="input-body" placeholder="Paste or type the email body here..."></textarea>
+          </div>
+          <div class="form-group threshold-section">
+            <label class="form-label">Spam Threshold</label>
+            <div class="threshold-row">
+              <span class="threshold-label">Conservative (fewer false positives)</span>
+              <input type="range" id="threshold-slider" min="0.1" max="0.9" step="0.05" value="0.5" oninput="updateThreshold(this.value)"/>
+              <span class="threshold-val" id="threshold-display">0.50</span>
+              <span class="threshold-label">Aggressive (catch more spam)</span>
+            </div>
+          </div>
+          <div class="action-row">
+            <button class="btn btn-primary" onclick="classifyEmail()" id="classify-btn">🔍 Classify Email</button>
+            <button class="btn btn-ghost" onclick="loadDemo()">📋 Load Demo</button>
+            <button class="btn btn-ghost" onclick="clearForm()">🗑 Clear</button>
+          </div>
+          <!-- Result -->
+          <div class="result-card" id="result-card">
+            <div class="result-verdict" id="result-verdict"></div>
+            <div class="result-info" id="result-info"></div>
+            <div class="conf-bar"><div class="conf-fill" id="conf-fill"></div></div>
+            <div style="font-size:11px;color:var(--muted);font-family:var(--mono);" id="conf-text"></div>
+            <div class="ind-row" id="ind-row"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── INBOX PANEL (requires login) ── -->
+    <div class="panel" id="panel-inbox">
+      <div class="panel-header">
+        <div class="panel-title">📥 Inbox</div>
+        <div class="panel-actions">
+          <button class="btn btn-ghost" onclick="loadInbox()">🔄 Refresh</button>
+        </div>
+      </div>
+      <div class="email-list" id="inbox-list"></div>
+      <div class="email-detail" id="inbox-detail">
+        <div class="detail-inner" id="inbox-detail-inner"></div>
+      </div>
+    </div>
+
+    <!-- ── TRASH PANEL (requires login) ── -->
+    <div class="panel" id="panel-trash">
+      <div class="panel-header">
+        <div class="panel-title">🗑️ Spam / Trash</div>
+        <div class="panel-actions">
+          <button class="btn btn-ghost" onclick="loadTrash()">🔄 Refresh</button>
+          <button class="btn btn-danger" onclick="emptyTrash()">🗑 Empty Trash</button>
+        </div>
+      </div>
+      <div class="email-list" id="trash-list"></div>
+      <div class="email-detail" id="trash-detail">
+        <div class="detail-inner" id="trash-detail-inner"></div>
+      </div>
+    </div>
+
+  </main><!-- /main -->
+</div><!-- /app -->
+
+<!-- ── LOGIN MODAL ── -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <button class="login-close" onclick="closeLoginModal()">✕</button>
+    <div class="login-title">
+      <div class="login-title-icon">🔐</div>
+      Sign in to SpamGuard
+    </div>
+    <div class="login-sub">Connect your Gmail account to access inbox sync, spam history, and more.</div>
+    <div class="form-group">
+      <label class="form-label">Gmail Address</label>
+      <input class="form-input" id="login-email" type="email" placeholder="you@gmail.com"/>
+    </div>
+    <div class="form-group">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <label class="form-label" style="margin-bottom:0;">App Password</label>
+        <span class="apppw-toggle" id="apppw-toggle" onclick="toggleAppPwCard()">
+          🔑 How to create &nbsp;<i class="arrow">▼</i>
+        </span>
+      </div>
+      <input class="form-input" id="login-password" type="password" placeholder="xxxx xxxx xxxx xxxx" onkeydown="if(event.key==='Enter')login()"/>
+
+      <!-- Dropdown Info Card -->
+      <div class="apppw-card" id="apppw-card">
+        <div class="apppw-card-inner">
+          <div class="apppw-card-title">🔐 How to Create a Gmail App Password</div>
+          <div class="apppw-steps">
+
+            <div class="apppw-step">
+              <div class="apppw-num">1</div>
+              <div class="apppw-text">
+                <strong>Enable 2-Step Verification</strong> — Go to your Google Account at
+                <code>myaccount.google.com</code>, then navigate to <strong>Security → 2-Step Verification</strong> and turn it on. App passwords are only available once this is active.
+              </div>
+            </div>
+
+            <div class="apppw-step">
+              <div class="apppw-num">2</div>
+              <div class="apppw-text">
+                <strong>Open App Passwords</strong> — In the same Security section, scroll down to find <strong>App passwords</strong> (search for it if hidden). Click to open it.
+              </div>
+            </div>
+
+            <div class="apppw-step">
+              <div class="apppw-num">3</div>
+              <div class="apppw-text">
+                <strong>Select App & Device</strong> — From the dropdowns, choose <code>Mail</code> as the app and <code>Other (Custom name)</code> as the device. Enter a name like <strong>"SpamGuard"</strong> to identify it later.
+              </div>
+            </div>
+
+            <div class="apppw-step">
+              <div class="apppw-num">4</div>
+              <div class="apppw-text">
+                <strong>Generate the Password</strong> — Click <strong>Generate</strong>. Google will display a <strong>16-character password</strong> in groups of 4 (e.g., <code>xxxx xxxx xxxx xxxx</code>). Copy it immediately — it won't be shown again.
+              </div>
+            </div>
+
+            <div class="apppw-step">
+              <div class="apppw-num">5</div>
+              <div class="apppw-text">
+                <strong>Paste it here</strong> — Enter your Gmail address above and paste the 16-character app password into the field below. Spaces are optional — both formats are accepted.
+              </div>
+            </div>
+
+          </div>
+          <div class="apppw-tip">
+            ⚠️ <span><strong>Security note:</strong> App passwords grant access only to specific apps — not your full Google account. You can revoke them anytime from Google Account → Security → App passwords.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="login-btn" onclick="login()" style="width:100%;justify-content:center;padding:11px;">Login</button>
+    <div style="font-size:11px;color:var(--muted);text-align:center;">
+      <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--accent2);">Open Google App Passwords →</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "http://localhost:8000";
+
+// ── HELPERS ───────────────────────────────────────────────────
+function getHeaders() {
+  return { "Content-Type":"application/json", "X-Session-ID": localStorage.getItem("session_id") || "" };
+}
+async function apiFetch(url, opts={}) {
+  opts.headers = {...getHeaders(), ...(opts.headers||{})};
+  const res = await fetch(`${API}${url}`, opts);
+  if (res.status === 401) { localStorage.removeItem("session_id"); setLoggedOut(); return null; }
+  return res;
+}
+
+// ── SESSION RESTORE ───────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", () => {
+  const sid = localStorage.getItem("session_id");
+  if (sid) {
+    fetch(`${API}/api/stats`, {headers: getHeaders()}).then(r => {
+      if (r.ok) { showApp(); loadStats(); }
+      else localStorage.removeItem("session_id");
+    }).catch(() => {});
+  }
+  // Compose panel is always shown regardless
+  showPanel("compose");
+});
+
+function showApp() {
+  closeLoginModal();
+  document.getElementById("login-chip").classList.add("hidden");
+  document.getElementById("public-banner").style.display = "none";
+  document.getElementById("sidebar").classList.add("visible");
+  document.getElementById("stats-bar").classList.add("visible");
+  document.getElementById("logout-btn").style.display = "inline-flex";
+  document.querySelector(".app").classList.add("logged-in");
+}
+
+function setLoggedOut() {
+  document.getElementById("login-chip").classList.remove("hidden");
+  document.getElementById("public-banner").style.display = "flex";
+  document.getElementById("sidebar").classList.remove("visible");
+  document.getElementById("stats-bar").classList.remove("visible");
+  document.getElementById("logout-btn").style.display = "none";
+  document.querySelector(".app").classList.remove("logged-in");
+  showPanel("compose");
+}
+
+// ── APP PASSWORD DROPDOWN ─────────────────────────────────────
+function toggleAppPwCard() {
+  const card   = document.getElementById("apppw-card");
+  const toggle = document.getElementById("apppw-toggle");
+  const isOpen = card.classList.contains("open");
+  card.classList.toggle("open", !isOpen);
+  toggle.classList.toggle("open", !isOpen);
+}
+
+// ── LOGIN MODAL ───────────────────────────────────────────────
+function openLoginModal() {
+  document.getElementById("login-overlay").classList.add("visible");
+  setTimeout(() => document.getElementById("login-email").focus(), 100);
+}
+function closeLoginModal() {
+  document.getElementById("login-overlay").classList.remove("visible");
+  // collapse dropdown when modal closes
+  const card = document.getElementById("apppw-card");
+  const toggle = document.getElementById("apppw-toggle");
+  if (card) card.classList.remove("open");
+  if (toggle) toggle.classList.remove("open");
+}
+// Click outside to close
+document.getElementById("login-overlay").addEventListener("click", function(e) {
+  if (e.target === this) closeLoginModal();
+});
+
+// ── LOGIN / LOGOUT ────────────────────────────────────────────
+async function login() {
+  const emailVal = document.getElementById("login-email").value.trim();
+  const pw       = document.getElementById("login-password").value.trim();
+  if (!emailVal || !pw) return alert("Enter your Gmail and app password.");
+  const btn = document.getElementById("login-btn");
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Logging in...';
+  try {
+    const res  = await fetch(`${API}/api/login`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email:emailVal, app_password:pw})});
+    const data = await res.json();
+    if (data.success) {
+      localStorage.setItem("session_id", data.session_id);
+      showApp(); loadStats();
+    } else {
+      alert(data.error || "Login failed. Check your Gmail and app password.");
+      btn.disabled = false; btn.textContent = "Login";
+    }
+  } catch { alert("Cannot connect to backend. Is the server running?"); btn.disabled=false; btn.textContent="Login"; }
+}
+async function logout() {
+  try { await apiFetch("/api/logout", {method:"POST"}); } catch {}
+  localStorage.removeItem("session_id");
+  setLoggedOut();
+}
+
+// ── PANEL SWITCHING ───────────────────────────────────────────
+function showPanel(name) {
+  // Guard: if not logged in, only compose is allowed
+  const loggedIn = !!localStorage.getItem("session_id");
+  if (!loggedIn && name !== "compose") {
+    openLoginModal();
+    return;
+  }
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  const panel = document.getElementById("panel-" + name);
+  const nav   = document.getElementById("nav-" + name);
+  if (panel) panel.classList.add("active");
+  if (nav)   nav.classList.add("active");
+  if (name === "inbox") loadInbox();
+  if (name === "trash") loadTrash();
+}
+
+// ── STATS ─────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await apiFetch("/api/stats");
+    if (!r) return;
+    const d = await r.json();
+    document.getElementById("stat-total").textContent = d.total_classified ?? "—";
+    document.getElementById("stat-inbox").textContent = d.inbox_count ?? "—";
+    document.getElementById("stat-trash").textContent = d.trash_count ?? "—";
+    document.getElementById("stat-rate").textContent  = d.spam_rate != null ? (d.spam_rate*100).toFixed(1)+"%" : "—";
+    document.getElementById("badge-inbox").textContent = d.unread_count ?? 0;
+    document.getElementById("badge-trash").textContent = d.trash_count ?? 0;
+  } catch(e) { console.error("Stats:", e); }
+}
+
+// ── THRESHOLD ─────────────────────────────────────────────────
+function updateThreshold(v) {
+  document.getElementById("threshold-display").textContent = parseFloat(v).toFixed(2);
+}
+
+// ── CLASSIFY ──────────────────────────────────────────────────
+async function classifyEmail() {
+  const sender    = document.getElementById("input-sender").value.trim();
+  const subject   = document.getElementById("input-subject").value.trim();
+  const body      = document.getElementById("input-body").value.trim();
+  const threshold = parseFloat(document.getElementById("threshold-slider").value);
+  if (!body) return alert("Email body is required.");
+  const btn = document.getElementById("classify-btn");
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Classifying...';
+  try {
+    const res = await fetch(`${API}/api/classify`, {
+      method:"POST",
+      headers: {"Content-Type":"application/json", "X-Session-ID": localStorage.getItem("session_id") || ""},
+      body: JSON.stringify({sender, subject, body, threshold})
+    });
+    if (!res) return;
+    const d = await res.json();
+    if (d.result) showResult(d.result);
+    if (localStorage.getItem("session_id")) loadStats();
+  } catch(e) { toast("Error: " + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='🔍 Classify Email'; }
+}
+
+function showResult(r) {
+  const card = document.getElementById("result-card");
+  const isSpam = r.is_spam;
+  card.className = "result-card " + (isSpam ? "spam" : "ham");
+  card.style.display = "block";
+  document.getElementById("result-verdict").className = "result-verdict " + (isSpam ? "spam" : "ham");
+  document.getElementById("result-verdict").textContent = isSpam ? "🚫 SPAM DETECTED" : "✅ LEGITIMATE EMAIL";
+  document.getElementById("result-info").innerHTML =
+    `<span>Confidence: <strong>${(r.confidence*100).toFixed(1)}%</strong></span>` +
+    `<span>Threshold: ${r.threshold_used}</span>` +
+    `<span>Action: <strong>${r.action}</strong></span>`;
+  const fill = document.getElementById("conf-fill");
+  fill.style.width = (r.confidence*100) + "%";
+  fill.className = "conf-fill " + (isSpam ? "fill-spam" : "fill-ham");
+  document.getElementById("conf-text").textContent = `Spam confidence: ${(r.confidence*100).toFixed(1)}%`;
+  const row = document.getElementById("ind-row");
+  row.innerHTML = (r.indicators||[]).map(i => `<span class="ind-tag">⚑ ${i}</span>`).join("");
+}
+
+function clearForm() {
+  ["input-sender","input-subject","input-body"].forEach(id => { const el=document.getElementById(id); if(el) el.value=""; });
+  document.getElementById("result-card").style.display = "none";
+}
+function loadDemo() {
+  document.getElementById("input-sender").value  = "prize@winner-notify.xyz";
+  document.getElementById("input-subject").value = "YOU HAVE WON $1,000,000!!!";
+  document.getElementById("input-body").value    = "CONGRATULATIONS! You have been selected as our lucky winner! Click http://claim-now.xyz to claim your PRIZE!!! ACT NOW before it expires!!!";
+}
+
+// ── INBOX / TRASH LOAD ────────────────────────────────────────
+async function loadInbox() {
+  document.getElementById("inbox-list").innerHTML = '<div class="loading-row">Loading...</div>';
+  closeDetail("inbox");
+  try {
+    const r = await apiFetch("/api/inbox"); if(!r) return;
+    const d = await r.json();
+    renderEmailList(d.emails, "inbox-list", "inbox");
+  } catch(e) { console.error("Inbox:", e); }
+}
+async function loadTrash() {
+  document.getElementById("trash-list").innerHTML = '<div class="loading-row">Loading...</div>';
+  closeDetail("trash");
+  try {
+    const r = await apiFetch("/api/trash"); if(!r) return;
+    const d = await r.json();
+    renderEmailList(d.emails, "trash-list", "trash");
+  } catch(e) { console.error("Trash:", e); }
+}
+
+// ── RENDER EMAIL LIST ─────────────────────────────────────────
+function cleanPreview(text) {
+  if (!text) return "";
+  return text
+    .replace(/--[A-Za-z0-9_\-]+(--)?/g, "")
+    .replace(/Content-Type:.*?(\n|$)/gi, "")
+    .replace(/Content-Transfer-Encoding:.*?(\n|$)/gi, "")
+    .replace(/charset=.*?(\n|$)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 90);
+}
+
+function renderEmailList(emails, listId, container) {
+  const el = document.getElementById(listId);
+  if (!el) return;
+  if (!emails || emails.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">${container==="inbox"?"📭":"🗑️"}</div><div>No emails here</div></div>`;
+    return;
+  }
+  el.innerHTML = emails.map(email => {
+    const sender   = email.sender || "Unknown Sender";
+    const initials = sender[0].toUpperCase();
+    const isSpam   = container === "trash";
+    const color    = isSpam ? "var(--spam)" : "var(--ham)";
+    const bgColor  = isSpam ? "rgba(239,68,68,.15)" : "rgba(34,197,94,.15)";
+    const conf     = (isSpam ? email.confidence : (1 - email.confidence)) * 100;
+    const pillCls  = isSpam ? "pill-spam" : "pill-ham";
+    const subject  = email.subject || "(no subject)";
+    const preview  = cleanPreview(email.body);
+    const time     = formatTime(email.received_at || email.flagged_at);
+    return `
+      <div class="email-item" onclick="viewEmail(${email.id},'${container}')">
+        <div class="email-avatar" style="background:${bgColor};color:${color};">${initials}</div>
+        <div class="email-body-col">
+          <div class="email-from">${escHtml(sender)}</div>
+          <div class="email-subject">${escHtml(subject)}</div>
+          <div class="email-preview">${escHtml(preview)}</div>
+        </div>
+        <div class="email-right-col">
+          <div class="email-time">${time}</div>
+          <span class="conf-pill ${pillCls}">${conf.toFixed(0)}%</span>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function formatTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts.replace(" ","T"));
+  if (isNaN(d)) return ts.slice(0,16);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60)   return "just now";
+  if (diff < 3600) return Math.floor(diff/60) + "m ago";
+  if (diff < 86400)return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString([],{month:"short",day:"numeric"});
+}
+
+// ── EMAIL DETAIL VIEW ─────────────────────────────────────────
+async function viewEmail(id, container) {
+  try {
+    const r = await apiFetch(`/api/email/${container}/${id}`); if(!r) return;
+    const d = await r.json();
+    if (d.error) return toast("Email not found");
+
+    const isTrash  = container === "trash";
+    const restoreBtn = isTrash
+      ? `<button class="btn btn-success" onclick="restoreEmail(${id})">↩ Restore to Inbox</button>
+         <button class="btn btn-danger"  onclick="deleteEmail(${id})">🗑 Delete Permanently</button>`
+      : "";
+
+    const indiHTML = (d.indicators||[]).length
+      ? `<div class="detail-indicators">${d.indicators.map(i=>`<span class="ind-tag">⚑ ${escHtml(i)}</span>`).join("")}</div>` : "";
+
+    const detailInner = document.getElementById(`${container}-detail-inner`);
+    detailInner.innerHTML = `
+      <div class="detail-back" onclick="closeDetail('${container}')">← Back to ${container}</div>
+      <div class="detail-subject">${escHtml(d.subject || "(no subject)")}</div>
+      <div class="detail-meta">
+        <span>From: <strong>${escHtml(d.sender || "Unknown")}</strong></span>
+        <span>Confidence: <strong>${(d.confidence*100).toFixed(1)}%</strong></span>
+        <span>${isTrash ? "🚫 Spam" : "✅ Ham"}</span>
+      </div>
+      ${indiHTML}
+      <div class="detail-body-box">${escHtml(d.body || "(no body)")}</div>
+      <div class="detail-actions">${restoreBtn}</div>`;
+
+    const detailEl = document.getElementById(`${container}-detail`);
+    detailEl.classList.add("open");
+    detailEl.scrollIntoView({behavior:"smooth", block:"nearest"});
+  } catch(e) { console.error("viewEmail:", e); }
+}
+
+function closeDetail(container) {
+  const el = document.getElementById(`${container}-detail`);
+  if (el) el.classList.remove("open");
+}
+
+async function restoreEmail(id) {
+  const r = await apiFetch(`/api/email/restore/${id}`, {method:"POST"}); if(!r) return;
+  const d = await r.json();
+  if (d.success) { toast("✅ Restored to Inbox"); closeDetail("trash"); loadTrash(); loadInbox(); loadStats(); }
+  else toast("Restore failed");
+}
+async function deleteEmail(id) {
+  if (!confirm("Permanently delete this email?")) return;
+  const r = await apiFetch(`/api/email/delete/${id}`, {method:"POST"}); if(!r) return;
+  const d = await r.json();
+  if (d.success) { toast("🗑 Deleted permanently"); closeDetail("trash"); loadTrash(); loadStats(); }
+  else toast("Delete failed");
+}
+async function emptyTrash() {
+  if (!confirm("Delete ALL spam emails permanently? This cannot be undone.")) return;
+  const r = await apiFetch("/api/trash/empty", {method:"POST"}); if(!r) return;
+  const d = await r.json();
+  if (d.success) { toast("🗑 Trash emptied"); loadTrash(); loadStats(); }
+  else toast(d.error || "Failed");
+}
+
+// ── GMAIL SYNC (with polling) ─────────────────────────────────
+let syncPollTimer = null;
+
+async function syncGmail(fetchAll = false) {
+  if (syncPollTimer) { toast("Sync already running..."); return; }
+  const navSync = document.getElementById("nav-sync");
+  if (navSync) navSync.style.opacity = "0.5";
+  toast("⏳ " + (fetchAll ? "Fetching all emails..." : "Syncing Gmail..."));
+
+  try {
+    const r = await apiFetch("/api/gmail/sync", {
+      method:"POST",
+      body: JSON.stringify({fetch_all: fetchAll})
+    });
+    if (!r) return;
+    const d = await r.json();
+    if (!d.success && d.error) { toast("❌ " + d.error); return; }
+
+    syncPollTimer = setInterval(async () => {
+      try {
+        const sr = await apiFetch("/api/sync/status"); if (!sr) return;
+        const sd = await sr.json();
+        if (!sd.running) {
+          clearInterval(syncPollTimer); syncPollTimer = null;
+          if (navSync) navSync.style.opacity = "1";
+          if (sd.error) {
+            toast("❌ Sync error: " + sd.error);
+          } else {
+            const n = sd.processed || 0;
+            toast(n > 0 ? `✅ ${n} email${n>1?"s":""} processed` : "✅ No new emails");
+            if (n > 0) { loadInbox(); loadTrash(); loadStats(); }
+            const lbl = document.getElementById("last-sync-lbl");
+            if (lbl && sd.last_sync) lbl.textContent = "Last: " + sd.last_sync;
+          }
+        }
+      } catch { clearInterval(syncPollTimer); syncPollTimer = null; if(navSync) navSync.style.opacity="1"; }
+    }, 3000);
+  } catch(e) {
+    toast("❌ " + e.message);
+    if (navSync) navSync.style.opacity = "1";
+  }
+}
+
+async function syncAllEmails() {
+  if (!confirm("Fetch ALL emails from Gmail inbox? This may take 30–60 seconds.")) return;
+  await syncGmail(true);
+}
+
+// ── AUTO-SYNC ─────────────────────────────────────────────────
+let autoInterval = null, countdownTimer = null, countdown = 0;
+const AUTO_SEC = 10;
+
+function toggleAutoSync() {
+  if (autoInterval) stopAutoSync(); else startAutoSync();
+}
+function startAutoSync() {
+  syncGmail(false);
+  countdown = AUTO_SEC;
+  autoInterval = setInterval(() => { syncGmail(false); countdown = AUTO_SEC; }, AUTO_SEC * 1000);
+  countdownTimer = setInterval(() => {
+    countdown = Math.max(0, countdown - 1);
+    const el = document.getElementById("countdown"); if(el) el.textContent = countdown;
+  }, 1000);
+  _setAutoUI(true);
+  toast("✅ Auto-sync ON — every 10s");
+}
+function stopAutoSync() {
+  clearInterval(autoInterval); clearInterval(countdownTimer);
+  autoInterval = countdownTimer = null;
+  _setAutoUI(false);
+  toast("Auto-sync OFF");
+}
+function _setAutoUI(on) {
+  const badge = document.getElementById("autosync-badge");
+  const sub   = document.getElementById("sync-sub");
+  if (badge) { badge.textContent=on?"ON":"OFF"; badge.style.background=on?"#22c55e":"#374151"; badge.style.color=on?"#fff":"#9ca3af"; }
+  if (sub)   sub.style.display = on?"block":"none";
+  const nav = document.getElementById("nav-autosync");
+  if (nav) nav.style.color = on ? "var(--ham)" : "";
+}
+
+// ── TOAST ─────────────────────────────────────────────────────
+let _toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("show"), 3500);
+}
+</script>
+</body>
+</html>
