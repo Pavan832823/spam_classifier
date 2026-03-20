@@ -548,7 +548,9 @@ class APIHandler(BaseHTTPRequestHandler):
 
 
 # ── Entry point ────────────────────────────────────────────────────────────
-def run(host: str = "0.0.0.0", port: int = 8000) -> None:
+def run(host: str = "0.0.0.0", port: int = None) -> None:
+    if port is None:
+        port = int(os.environ.get("PORT", 8080))
     server = ThreadingHTTPServer((host, port), APIHandler)
     logger.info("Server running at http://%s:%d", host, port)
     server.serve_forever()
