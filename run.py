@@ -110,7 +110,7 @@ def main():
     parser.add_argument("--train",  action="store_true", help="Force retrain model")
     parser.add_argument("--test",   action="store_true", help="Run test suite")
     parser.add_argument("--demo",   action="store_true", help="Run CLI demo")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="Server port")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8080)), help="Server port")
     parser.add_argument("--host",   type=str, default="0.0.0.0", help="Server host")
     args = parser.parse_args()
 
