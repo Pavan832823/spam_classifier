@@ -510,7 +510,11 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const API = "http://localhost:8000";
+// ── AUTO-DETECT API URL ───────────────────────────────────────
+// Uses same origin in production (Railway), localhost in development
+const API = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? "http://localhost:8000"
+  : "";
 
 // ── HELPERS ───────────────────────────────────────────────────
 function getHeaders() {
